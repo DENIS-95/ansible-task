@@ -72,8 +72,10 @@
 
   vars:
     app_dir: /var/www/app
+    ansible_remote_tmp: /var/tmp/ansible-www-data
 
   tasks:
+
     - name: Update apt cache
       ansible.builtin.apt:
         update_cache: true
@@ -99,6 +101,14 @@
           - npm
           - composer
         state: present
+
+    - name: Create Ansible temporary directory for www-data
+      ansible.builtin.file:
+        path: "{{ ansible_remote_tmp }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0700"
 
     - name: Enable Apache rewrite module
       ansible.builtin.command:
@@ -239,7 +249,6 @@
       register: enable_laravel
       changed_when: "'Site laravel already enabled' not in enable_laravel.stdout"
       notify: Restart Apache
-
 
   handlers:
     - name: Restart Apache
