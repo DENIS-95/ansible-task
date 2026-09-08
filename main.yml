@@ -8,8 +8,6 @@
   become: true
 
   vars:
-    # Web server address allowed to connect to MariaDB.
-    # For a lab task we use % to allow the application server.
     db_allowed_host: "%"
     ansible_python_interpreter: auto_silent
 
@@ -73,11 +71,9 @@
 
   vars:
     app_dir: /var/www/app
-    ansible_remote_tmp: /var/tmp/ansible-www-data
     ansible_python_interpreter: auto_silent
 
   tasks:
-
     - name: Update apt cache
       ansible.builtin.apt:
         update_cache: true
@@ -104,14 +100,6 @@
           - composer
         state: present
 
-    - name: Create Ansible temporary directory for www-data
-      ansible.builtin.file:
-        path: "{{ ansible_remote_tmp }}"
-        state: directory
-        owner: www-data
-        group: www-data
-        mode: "0700"
-
     - name: Enable Apache rewrite module
       ansible.builtin.command:
         cmd: a2enmod rewrite
@@ -129,8 +117,6 @@
       ansible.builtin.file:
         path: "{{ app_dir }}"
         state: directory
-        owner: www-data
-        group: www-data
         mode: "0755"
 
     - name: Clone application repository
@@ -144,18 +130,14 @@
       ansible.builtin.command:
         cmd: composer install --no-interaction --prefer-dist
         chdir: "{{ app_dir }}"
-      become_user: www-data
       environment:
-        COMPOSER_HOME: /tmp/composer
+        COMPOSER_ALLOW_SUPERUSER: "1"
 
     - name: Create Laravel .env file
       ansible.builtin.copy:
         src: "{{ app_dir }}/.env.example"
         dest: "{{ app_dir }}/.env"
         remote_src: true
-        owner: www-data
-        group: www-data
-        mode: "0640"
 
     - name: Configure Laravel database connection
       ansible.builtin.lineinfile:
@@ -169,13 +151,11 @@
         - { key: "DB_DATABASE", value: "{{ db_name }}" }
         - { key: "DB_USERNAME", value: "{{ db_user }}" }
         - { key: "DB_PASSWORD", value: "{{ db_pass }}" }
-      become_user: www-data
 
     - name: Generate Laravel application key
       ansible.builtin.command:
         cmd: php artisan key:generate --force
         chdir: "{{ app_dir }}"
-      become_user: www-data
 
     - name: Wait for MariaDB
       ansible.builtin.wait_for:
@@ -187,33 +167,32 @@
       ansible.builtin.command:
         cmd: php artisan migrate --force
         chdir: "{{ app_dir }}"
-      become_user: www-data
 
     - name: Install Node.js dependencies
       ansible.builtin.command:
         cmd: npm install
         chdir: "{{ app_dir }}"
-      become_user: www-data
 
     - name: Build frontend assets
       ansible.builtin.command:
         cmd: npm run build
         chdir: "{{ app_dir }}"
-      become_user: www-data
 
-    - name: Set Laravel storage permissions
+    - name: Set ownership for all application files
       ansible.builtin.file:
-        path: "{{ app_dir }}/storage"
+        path: "{{ app_dir }}"
         owner: www-data
         group: www-data
         recurse: true
 
-    - name: Set Laravel bootstrap cache permissions
+    - name: Set permissions for specific directories
       ansible.builtin.file:
-        path: "{{ app_dir }}/bootstrap/cache"
-        owner: www-data
-        group: www-data
+        path: "{{ item }}"
+        mode: "0775"
         recurse: true
+      loop:
+        - "{{ app_dir }}/storage"
+        - "{{ app_dir }}/bootstrap/cache"
 
     - name: Configure Apache virtual host
       ansible.builtin.copy:
@@ -224,15 +203,12 @@
         content: |
           <VirtualHost *:80>
               ServerName _default_
-
               DocumentRoot {{ app_dir }}/public
-
               <Directory {{ app_dir }}/public>
                   AllowOverride All
                   Require all granted
                   Options FollowSymLinks
               </Directory>
-
               ErrorLog ${APACHE_LOG_DIR}/laravel_error.log
               CustomLog ${APACHE_LOG_DIR}/laravel_access.log combined
           </VirtualHost>
@@ -256,29 +232,4 @@
     - name: Restart Apache
       ansible.builtin.service:
         name: apache2
-        state: restarted
-        regexp: '^\s*bind-address\s*='
-        line: 'bind-address = 0.0.0.0'
-        backup: true
-      notify: Restart MariaDB
-
-    - name: Create application database
-      community.mysql.mysql_db:
-        name: "{{ db_name }}"
-        state: present
-        login_unix_socket: /run/mysqld/mysqld.sock
-
-    - name: Create application database user
-      community.mysql.mysql_user:
-        name: "{{ db_user }}"
-        password: "{{ db_pass }}"
-        host: "{{ db_allowed_host }}"
-        priv: "{{ db_name }}.*:ALL"
-        state: present
-        login_unix_socket: /run/mysqld/mysqld.sock
-
-  handlers:
-    - name: Restart MariaDB
-      ansible.builtin.service:
-        name: mariadb
         state: restarted
