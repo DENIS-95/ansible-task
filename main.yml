@@ -256,7 +256,7 @@
     - name: Restart Apache
       ansible.builtin.service:
         name: apache2
-        state: restarted        path: /etc/mysql/mariadb.conf.d/50-server.cnf
+        state: restarted
         regexp: '^\s*bind-address\s*='
         line: 'bind-address = 0.0.0.0'
         backup: true
